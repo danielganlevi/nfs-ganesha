@@ -81,6 +81,10 @@ bool get_req_uid_gid(struct svc_req *req, struct user_cred *user_credentials)
 	char principal[MAXNAMLEN + 1];
 #endif
 
+#ifdef _VID_MAPPING
+	int i;
+	gid_t *tmp_caller_garray;
+#endif
 	if (user_credentials == NULL)
 		return false;
 
@@ -224,6 +228,49 @@ bool get_req_uid_gid(struct svc_req *req, struct user_cred *user_credentials)
 
 		break;
 	}
+#ifdef _VID_MAPPING
+	if (!uid2vuid(&user_credentials->caller_uid, &user_credentials->caller_uid)) {
+		LogCrit(COMPONENT_IDMAPPER,
+			"get_req_uid_gid: Failed to map virtual ID for UID %d",
+			user_credentials->caller_uid);
+		return FALSE;
+	}
+
+	if (!gid2vgid(&user_credentials->caller_gid, &user_credentials->caller_gid)) {
+		LogCrit(COMPONENT_IDMAPPER,
+			"get_req_uid_gid: Failed to map virtual ID for GID %d",
+			user_credentials->caller_gid);
+		return FALSE;
+	}
+
+	if (user_credentials->caller_glen > 0) {
+		tmp_caller_garray = gsh_malloc(user_credentials->caller_glen * sizeof(gid_t));
+		if(tmp_caller_garray == NULL) {
+			LogCrit(COMPONENT_DISPATCH, "Failure to allocate memory for VID group list");
+			return FALSE;
+		}
+
+		for (i = 0; i < user_credentials->caller_glen; ++i) {
+			if (!gid2vgid(&user_credentials->caller_garray[i], &tmp_caller_garray[i])) {
+				LogCrit(COMPONENT_IDMAPPER,
+					"get_req_uid_gid: Failed to map virtual ID for GID %d",
+					user_credentials->caller_garray[i]);
+				gsh_free(tmp_caller_garray);
+				return FALSE;
+			}
+		}
+
+#ifdef _HAVE_GSSAPI
+		if((user_credentials->caller_flags & USER_CRED_GSS_PROCESSED) != 0) {
+			gsh_free(user_credentials->caller_garray);
+		}
+#endif
+		user_credentials->caller_garray = tmp_caller_garray;
+
+	}
+	user_credentials->caller_flags |= USER_CRED_VID_MAPPED;
+#endif
+
 	return true;
 }
 
@@ -387,9 +434,18 @@ void init_credentials(struct user_cred *user_credentials)
 
 void clean_credentials(struct user_cred *user_credentials)
 {
+#if defined(_HAVE_GSSAPI) || defined(_VID_MAPPING)
+	if((user_credentials->caller_garray != NULL) &&
+	   (
+	    FALSE
 #ifdef _HAVE_GSSAPI
-	if (((user_credentials->caller_flags & USER_CRED_GSS_PROCESSED) != 0)
-	    && (user_credentials->caller_garray != NULL)) {
+	    || ((user_credentials->caller_flags & USER_CRED_GSS_PROCESSED) != 0)
+#endif
+#ifdef _VID_MAPPING
+	    || (((user_credentials->caller_flags & USER_CRED_VID_MAPPED) != 0)
+	    && (user_credentials->caller_glen > 0))
+#endif
+	   )) {
 		gsh_free(user_credentials->caller_garray);
 	}
 #endif

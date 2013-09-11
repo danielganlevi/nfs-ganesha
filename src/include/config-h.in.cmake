@@ -42,6 +42,7 @@
 #cmakedefine LITTLEEND 1
 #cmakedefine BIGEND 1
 #cmakedefine HAVE_XATTR_H 1
+#cmakedefine _VID_MAPPING 1
 
 #define NFS_GANESHA 1
 

@@ -68,6 +68,24 @@ struct cache_group {
 	struct avltree_node gid_node;	/*< Node in the GID tree */
 };
 
+#ifdef _VID_MAPPING
+struct vid_cache_user {
+	uid_t uid;
+	uid_t vuid;
+	time_t mapping_time;
+	struct avltree_node uid_node;
+	struct avltree_node vuid_node;
+};
+
+struct vid_cache_group {
+	gid_t gid;
+	gid_t vgid;
+	time_t mapping_time;
+	struct avltree_node gid_node;
+	struct avltree_node vgid_node;
+};
+#endif
+
 /**
  * @brief Number of entires in the UID cache, should be prime.
  */
@@ -104,6 +122,20 @@ pthread_rwlock_t idmapper_user_lock = PTHREAD_RWLOCK_INITIALIZER;
 
 pthread_rwlock_t idmapper_group_lock = PTHREAD_RWLOCK_INITIALIZER;
 
+#ifdef _VID_MAPPING
+/**
+ * @brief Lock that protects the virtual id mapping user cache
+ */
+
+pthread_rwlock_t vidmap_user_lock = PTHREAD_RWLOCK_INITIALIZER;
+
+/**
+ * @brief Lock that protects the virtual id mapping group cache
+ */
+
+pthread_rwlock_t vidmap_group_lock = PTHREAD_RWLOCK_INITIALIZER;
+#endif /* _VID_MAPPING */
+
 /**
  * @brief Tree of users, by name
  */
@@ -126,6 +158,32 @@ static struct avltree gname_tree;
  */
 
 static struct avltree gid_tree;
+
+#ifdef _VID_MAPPING
+/**
+ * @brief Tree of virtual UID mappings, by ID
+ */
+
+static struct avltree vidmap_uid_tree;
+
+/**
+ * @brief Tree of virtual UID mappings, by virtual ID
+ */
+
+static struct avltree vidmap_vuid_tree;
+
+/**
+ * @brief Tree of virtual GID mappings, by ID
+ */
+
+static struct avltree vidmap_gid_tree;
+
+/**
+ * @brief Tree of virtual GID mappings, by virtual ID
+ */
+
+static struct avltree vidmap_vgid_tree;
+#endif /* _VID_MAPPING */
 
 /**
  * @brief Compare two buffers
@@ -264,6 +322,127 @@ static int gid_comparator(const struct avltree_node *node1,
 		return 0;
 }
 
+#ifdef _VID_MAPPING
+/**
+ * @brief Comparison for UIDs in virtual id mapping
+ *
+ * @param[in] node1 A node
+ * @param[in] nodea Another node
+ *
+ * @retval -1 if node1 is less than nodea
+ * @retval 0 if node1 and nodea are equal
+ * @retval 1 if node1 is greater than nodea
+ */
+
+static int vidmap_uid_comparator(const struct avltree_node *node1,
+				 const struct avltree_node *nodea)
+{
+	struct vid_cache_user *user1
+		= avltree_container_of(node1, struct vid_cache_user,
+				       uid_node);
+	struct vid_cache_user *usera
+		= avltree_container_of(nodea, struct vid_cache_user,
+				       uid_node);
+
+	if (user1->uid < usera->uid) {
+		return -1;
+	} else if (user1->uid > usera->uid) {
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
+/**
+ * @brief Comparison for virtual UIDs in virtual id mapping
+ *
+ * @param[in] node1 A node
+ * @param[in] nodea Another node
+ *
+ * @retval -1 if node1 is less than nodea
+ * @retval 0 if node1 and nodea are equal
+ * @retval 1 if node1 is greater than nodea
+ */
+
+static int vidmap_vuid_comparator(const struct avltree_node *node1,
+				  const struct avltree_node *nodea)
+{
+	struct vid_cache_user *user1
+		= avltree_container_of(node1, struct vid_cache_user,
+				       vuid_node);
+	struct vid_cache_user *usera
+		= avltree_container_of(nodea, struct vid_cache_user,
+				       vuid_node);
+
+	if (user1->vuid < usera->vuid) {
+		return -1;
+	} else if (user1->vuid > usera->vuid) {
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
+/**
+ * @brief Comparison for GIDs in virtual id mapping
+ *
+ * @param[in] node1 A node
+ * @param[in] nodea Another node
+ *
+ * @retval -1 if node1 is less than nodea
+ * @retval 0 if node1 and nodea are equal
+ * @retval 1 if node1 is greater than nodea
+ */
+
+static int vidmap_gid_comparator(const struct avltree_node *node1,
+				 const struct avltree_node *nodea)
+{
+	struct vid_cache_group *group1
+		= avltree_container_of(node1, struct vid_cache_group,
+				       gid_node);
+	struct vid_cache_group *groupa
+		= avltree_container_of(nodea, struct vid_cache_group,
+				       gid_node);
+
+	if (group1->gid < groupa->gid) {
+		return -1;
+	} else if (group1->gid > groupa->gid) {
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
+/**
+ * @brief Comparison for virtual GIDs in virtual id mapping
+ *
+ * @param[in] node1 A node
+ * @param[in] nodea Another node
+ *
+ * @retval -1 if node1 is less than nodea
+ * @retval 0 if node1 and nodea are equal
+ * @retval 1 if node1 is greater than nodea
+ */
+
+static int vidmap_vgid_comparator(const struct avltree_node *node1,
+				  const struct avltree_node *nodea)
+{
+	struct vid_cache_group *group1
+		= avltree_container_of(node1, struct vid_cache_group,
+				       vgid_node);
+	struct vid_cache_group *groupa
+		= avltree_container_of(nodea, struct vid_cache_group,
+				       vgid_node);
+
+	if (group1->vgid < groupa->vgid) {
+		return -1;
+	} else if (group1->vgid > groupa->vgid) {
+		return 1;
+	} else {
+		return 0;
+	}
+}
+#endif /* _VID_MAPPING */
 /**
  * @brief Initialize the IDMapper cache
  */
@@ -278,6 +457,20 @@ void idmapper_cache_init(void)
 	avltree_init(&gid_tree, gid_comparator, 0);
 	memset(gid_cache, 0, id_cache_size * sizeof(struct avltree_node *));
 }
+
+#ifdef _VID_MAPPING
+/**
+ * @brief Initialize the virtual ID mapping cache
+ */
+
+void vidmap_cache_init(void)
+{
+	avltree_init(&vidmap_uid_tree, vidmap_uid_comparator, 0);
+	avltree_init(&vidmap_vuid_tree, vidmap_vuid_comparator, 0);
+	avltree_init(&vidmap_gid_tree, vidmap_gid_comparator, 0);
+	avltree_init(&vidmap_vgid_tree, vidmap_vgid_comparator, 0);
+}
+#endif /* _VID_MAPPING */
 
 /**
  * @brief Add a user entry to the cache
@@ -709,5 +902,324 @@ void idmapper_clear_cache(void)
 	pthread_rwlock_unlock(&idmapper_group_lock);
 	pthread_rwlock_unlock(&idmapper_user_lock);
 }
+
+#ifdef _VID_MAPPING
+
+/**
+ * @brief Add a user entry to the virtual id cache
+ *
+ * @note The caller must hold vidmap_user_lock for write.
+ *
+ * @param[in] uid  The user ID
+ * @param[in] vuid The virtual UID.
+ *
+ * @retval true on success.
+ * @retval false otherwise.
+ */
+
+bool vidmap_add_user(uid_t uid, uid_t vuid)
+{
+	struct vid_cache_user prototype = {
+		.uid = uid,
+		.vuid = vuid
+	};
+
+	struct avltree_node *found_id_node = avltree_lookup(&prototype.uid_node, &vidmap_uid_tree);
+	if (likely(found_id_node)) {
+		struct vid_cache_user *found_id_user
+			= avltree_container_of(found_id_node,
+					       struct vid_cache_user,
+					       uid_node);
+
+		if (likely(found_id_user->vuid == vuid)) {
+			/* The most common case is just a refresh,
+			   handle it without re-allocation and re-insertion. */
+			found_id_user->mapping_time = time(NULL);
+			return true;
+		}
+		else {
+			avltree_remove(found_id_node, &vidmap_uid_tree);
+			avltree_remove(&found_id_user->vuid_node, &vidmap_vuid_tree);
+			gsh_free(found_id_user);
+		}
+	}
+
+	struct avltree_node *found_vid_node = avltree_lookup(&prototype.vuid_node, &vidmap_vuid_tree);
+	if (unlikely(found_vid_node)) {
+		struct vid_cache_user *found_vid_user
+			= avltree_container_of(found_vid_node,
+					       struct vid_cache_user,
+					       vuid_node);
+
+		avltree_remove(found_vid_node, &vidmap_vuid_tree);
+		avltree_remove(&found_vid_user->uid_node, &vidmap_uid_tree);
+		gsh_free(found_vid_user);
+	}
+
+	struct vid_cache_user *new = gsh_malloc(sizeof(struct vid_cache_user));
+	if (unlikely(new == NULL)) {
+		LogMajor(COMPONENT_IDMAPPER,
+			 "Unable to allocate memory for new virtual uid node.");
+		return false;
+	}
+	new->uid = uid;
+	new->vuid = vuid;
+	new->mapping_time = time(NULL);
+
+	found_id_node = avltree_insert(&new->uid_node, &vidmap_uid_tree);
+	assert(found_id_node == NULL);
+
+	found_vid_node = avltree_insert(&new->vuid_node, &vidmap_vuid_tree);
+	assert(found_vid_node == NULL);
+
+	return true;
+}
+
+/**
+ * @brief Add a group entry to the virtual id cache
+ *
+ * @note The caller must hold vidmap_group_lock for write.
+ *
+ * @param[in] gid  The group ID
+ * @param[in] vgid The virtual UID.
+ *
+ * @retval true on success.
+ * @retval false otherwise.
+ */
+
+bool vidmap_add_group(gid_t gid, gid_t vgid)
+{
+	struct vid_cache_group prototype = {
+		.gid = gid,
+		.vgid = vgid
+	};
+
+	struct avltree_node *found_id_node = avltree_lookup(&prototype.gid_node, &vidmap_gid_tree);
+	if (likely(found_id_node)) {
+		struct vid_cache_group *found_id_group
+			= avltree_container_of(found_id_node,
+					       struct vid_cache_group,
+					       gid_node);
+
+		if (likely(found_id_group->vgid == vgid)) {
+			/* The most common case is just a refresh,
+			   handle it without re-allocation and re-insertion. */
+			found_id_group->mapping_time = time(NULL);
+			return true;
+		}
+		else {
+			avltree_remove(found_id_node, &vidmap_gid_tree);
+			avltree_remove(&found_id_group->vgid_node, &vidmap_vgid_tree);
+			gsh_free(found_id_group);
+		}
+	}
+
+	struct avltree_node *found_vid_node = avltree_lookup(&prototype.vgid_node, &vidmap_vgid_tree);
+	if (unlikely(found_vid_node)) {
+		struct vid_cache_group *found_vid_group
+			= avltree_container_of(found_vid_node,
+					       struct vid_cache_group,
+					       vgid_node);
+
+		avltree_remove(found_vid_node, &vidmap_vgid_tree);
+		avltree_remove(&found_vid_group->gid_node, &vidmap_gid_tree);
+		gsh_free(found_vid_group);
+	}
+
+	struct vid_cache_group *new = gsh_malloc(sizeof(struct vid_cache_group));
+	if (unlikely(new == NULL)) {
+		LogMajor(COMPONENT_IDMAPPER,
+			 "Unable to allocate memory for new virtual gid node.");
+		return false;
+	}
+	new->gid = gid;
+	new->vgid = vgid;
+	new->mapping_time = time(NULL);
+
+	found_id_node = avltree_insert(&new->gid_node, &vidmap_gid_tree);
+	assert(found_id_node == NULL);
+
+	found_vid_node = avltree_insert(&new->vgid_node, &vidmap_vgid_tree);
+	assert(found_vid_node == NULL);
+
+	return true;
+}
+
+/**
+ * @brief Look up a virtual UID by UID
+ *
+ * @note The caller must hold vidmap_user_lock for read.
+ *
+ * @param[in]  uid  The user ID to look up by.
+ * @param[out] vuid The virtual user ID to look up.
+ *
+ * @retval true on success.
+ * @retval false otherwise.
+ */
+
+bool vidmap_lookup_by_uid(const uid_t uid,
+			  uid_t *vuid)
+{
+	assert (vuid != NULL);
+
+	struct vid_cache_user prototype = {
+		.uid = uid
+	};
+
+	struct avltree_node *found_node = avltree_lookup(&prototype.uid_node,
+							 &vidmap_uid_tree);
+
+	if (unlikely(!found_node)) {
+		return false;
+	}
+
+	struct vid_cache_user *found_user
+		= avltree_container_of(found_node,
+				       struct vid_cache_user,
+				       uid_node);
+
+	time_t current_time = time(NULL);
+	if (unlikely(current_time - found_user->mapping_time >
+		nfs_param.vidmap_param.expiration_time)) {
+		return false;
+	}
+
+	*vuid = found_user->vuid;
+
+	return true;
+}
+
+/**
+ * @brief Look up UID by a virtual UID
+ *
+ * @note The caller must hold vidmap_user_lock for read.
+ *
+ * @param[in] vuid The virtual user ID to look up by.
+ * @param[out] uid The user ID to look up.
+ *
+ * @retval true on success.
+ * @retval false otherwise.
+ */
+
+bool vidmap_lookup_by_vuid(const uid_t vuid,
+			  uid_t *uid)
+{
+	assert (uid != NULL);
+
+	struct vid_cache_user prototype = {
+		.vuid = vuid
+	};
+
+	struct avltree_node *found_node = avltree_lookup(&prototype.vuid_node,
+							 &vidmap_vuid_tree);
+
+	if (unlikely(!found_node)) {
+		return false;
+	}
+
+	struct vid_cache_user *found_user
+		= avltree_container_of(found_node,
+				       struct vid_cache_user,
+				       vuid_node);
+
+	time_t current_time = time(NULL);
+	if (unlikely(current_time - found_user->mapping_time >
+		nfs_param.vidmap_param.expiration_time)) {
+		return false;
+	}
+
+	*uid = found_user->uid;
+
+	return true;
+}
+
+/**
+ * @brief Look up a virtual GID by GID
+ *
+ * @note The caller must hold vidmap_group_lock for read.
+ *
+ * @param[in]  gid  The group ID to look up by.
+ * @param[out] vgid The virtual group ID to look up.
+ *
+ * @retval true on success.
+ * @retval false otherwise.
+ */
+
+bool vidmap_lookup_by_gid(const gid_t gid,
+			  gid_t *vgid)
+{
+	assert (vgid != NULL);
+
+	struct vid_cache_group prototype = {
+		.gid = gid
+	};
+
+	struct avltree_node *found_node = avltree_lookup(&prototype.gid_node,
+							 &vidmap_gid_tree);
+
+	if (unlikely(!found_node)) {
+		return false;
+	}
+
+	struct vid_cache_group *found_group
+		= avltree_container_of(found_node,
+				       struct vid_cache_group,
+				       gid_node);
+
+	time_t current_time = time(NULL);
+	if (unlikely(current_time - found_group->mapping_time >
+		nfs_param.vidmap_param.expiration_time)) {
+		return false;
+	}
+
+	*vgid = found_group->vgid;
+
+	return true;
+}
+
+/**
+ * @brief Look up GID by a virtual GID
+ *
+ * @note The caller must hold vidmap_group_lock for read.
+ *
+ * @param[in] vgid The virtual group ID to look up by.
+ * @param[out] gid The group ID to look up.
+ *
+ * @retval true on success.
+ * @retval false otherwise.
+ */
+
+bool vidmap_lookup_by_vgid(const gid_t vgid,
+			  gid_t *gid)
+{
+	assert (gid != NULL);
+
+	struct vid_cache_group prototype = {
+		.vgid = vgid
+	};
+
+	struct avltree_node *found_node = avltree_lookup(&prototype.vgid_node,
+							 &vidmap_vgid_tree);
+
+	if (unlikely(!found_node)) {
+		return false;
+	}
+
+	struct vid_cache_group *found_group
+		= avltree_container_of(found_node,
+				       struct vid_cache_group,
+				       vgid_node);
+
+	time_t current_time = time(NULL);
+	if (unlikely(current_time - found_group->mapping_time >
+		nfs_param.vidmap_param.expiration_time)) {
+		return false;
+	}
+
+	*gid = found_group->gid;
+
+	return true;
+}
+#endif /* _VID_MAPPING */
 
 /** @} */

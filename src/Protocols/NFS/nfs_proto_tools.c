@@ -810,6 +810,11 @@ static fattr_xdr_result decode_acl(XDR * xdr, struct xdr_attrs_args *args)
 				LogFullDebug(COMPONENT_NFS_V4,
 					     "ACE who.gid = 0x%x",
 					     pace->who.gid);
+#ifdef _VID_MAPPING
+				if (!gid2vgid(&pace->who.gid, &pace->who.gid)) {
+					LogWarn(COMPONENT_IDMAPPER, "nfs4_decode_acl: Failed to map GID");
+				}
+#endif
 			} else {	/* Decode user. */
 				struct gsh_buffdesc uname = {
 					.addr = utf8buffer.utf8string_val,
@@ -825,6 +830,11 @@ static fattr_xdr_result decode_acl(XDR * xdr, struct xdr_attrs_args *args)
 				LogFullDebug(COMPONENT_NFS_V4,
 					     "ACE who.uid = 0x%x",
 					     pace->who.uid);
+#ifdef _VID_MAPPING
+				if (!uid2vuid(&pace->who.uid, &pace->who.uid)) {
+					LogWarn(COMPONENT_IDMAPPER, "nfs4_decode_acl: Failed to map UID");
+				}
+#endif
 			}
 		}
 
@@ -1534,6 +1544,12 @@ static fattr_xdr_result decode_owner(XDR * xdr, struct xdr_attrs_args *args)
 		return FATTR_BADOWNER;
 	}
 
+#ifdef _VID_MAPPING
+	if (!uid2vuid(&uid, &uid)) {
+		LogWarn(COMPONENT_IDMAPPER, "decode_owner: Failed to map UID");
+	}
+#endif
+
 	xdr_setpos(xdr, newpos);
 	args->attrs->owner = uid;
 	return FATTR_XDR_SUCCESS;
@@ -1578,6 +1594,12 @@ static fattr_xdr_result decode_group(XDR * xdr, struct xdr_attrs_args *args)
 	     (args->data ? args->data->export->export_perms.
 	      anonymous_gid : -1)))
 		return FATTR_BADOWNER;
+
+#ifdef _VID_MAPPING
+	if (!gid2vgid(&gid, &gid)) {
+		LogWarn(COMPONENT_IDMAPPER, "decode_owner: Failed to map GID");
+	}
+#endif
 
 	xdr_setpos(xdr, newpos);
 	args->attrs->group = gid;
@@ -3424,6 +3446,10 @@ int nfs4_FSALattr_To_Fattr(struct xdr_attrs_args *args, struct bitmap4 *Bitmap,
  */
 bool nfs3_Sattr_To_FSALattr(struct attrlist * FSAL_attr, sattr3 * sattr)
 {
+#ifdef _VID_MAPPING
+	uid_t owner;
+	gid_t owner_group;
+#endif
 	FSAL_attr->mask = 0;
 
 	if (sattr->mode.set_it) {
@@ -3437,6 +3463,13 @@ bool nfs3_Sattr_To_FSALattr(struct attrlist * FSAL_attr, sattr3 * sattr)
 		LogFullDebug(COMPONENT_NFSPROTO, "uid = %d",
 			     sattr->uid.set_uid3_u.uid);
 		FSAL_attr->owner = sattr->uid.set_uid3_u.uid;
+#ifdef _VID_MAPPING
+		owner = FSAL_attr->owner;
+		if (!uid2vuid(&owner, &owner)) {
+			LogWarn(COMPONENT_IDMAPPER, "nfs3_Sattr_To_FSALattr: Failed to map UID");
+		}
+		FSAL_attr->owner = owner;
+#endif
 		FSAL_attr->mask |= ATTR_OWNER;
 	}
 
@@ -3444,6 +3477,13 @@ bool nfs3_Sattr_To_FSALattr(struct attrlist * FSAL_attr, sattr3 * sattr)
 		LogFullDebug(COMPONENT_NFSPROTO, "gid = %d",
 			     sattr->gid.set_gid3_u.gid);
 		FSAL_attr->group = sattr->gid.set_gid3_u.gid;
+#ifdef _VID_MAPPING
+		owner_group = FSAL_attr->group;
+		if (!gid2vgid(&owner_group, &owner_group)) {
+			LogWarn(COMPONENT_IDMAPPER, "nfs3_Sattr_To_FSALattr: Failed to map GID");
+		}
+		FSAL_attr->group = owner_group;
+#endif
 		FSAL_attr->mask |= ATTR_GROUP;
 	}
 
@@ -3578,11 +3618,23 @@ static void nfs3_FSALattr_To_PartialFattr(const struct attrlist *FSAL_attr,
 
 	if (FSAL_attr->mask & ATTR_OWNER) {
 		Fattr->uid = FSAL_attr->owner;
+#ifdef _VID_MAPPING
+		if (!vuid2uid(&Fattr->uid, &Fattr->uid))
+		{
+			LogWarn(COMPONENT_IDMAPPER, "nfs3_FSALattr_To_PartialFattr: Failed to map UID");
+		}
+#endif
 		*mask |= ATTR_OWNER;
 	}
 
 	if (FSAL_attr->mask & ATTR_GROUP) {
 		Fattr->gid = FSAL_attr->group;
+#ifdef _VID_MAPPING
+		if (!vgid2gid(&Fattr->gid, &Fattr->gid))
+		{
+			LogWarn(COMPONENT_IDMAPPER, "nfs3_FSALattr_To_PartialFattr: Failed to map GID");
+		}
+#endif
 		*mask |= ATTR_GROUP;
 	}
 

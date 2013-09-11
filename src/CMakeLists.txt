@@ -212,6 +212,9 @@ option(STRICT_PACKAGE "Enable strict packaging behavior" OFF )
 # This option will trigger "long distro name" aka name that contains git information
 option(DISTNAME_HAS_GIT_DATA "Distribution package's name carries git data" OFF )
 
+# Virtual UID/GID mapping
+option(_VID_MAPPING OFF)
+
 # Choose a shortcut build config
 
 IF(BUILD_CONFIG)
@@ -714,6 +717,7 @@ message(STATUS "_GIT_HEAD_COMMIT_ABBREV = ${_GIT_HEAD_COMMIT_ABBREV}")
 message(STATUS "_GIT_DESCRIBE = ${_GIT_DESCRIBE}")
 message(STATUS "ALLOCATOR = ${ALLOCATOR}")
 message(STATUS "GOLD_LINKER = ${GOLD_LINKER}")
+message(STATUS "_VID_MAPPING = ${_VID_MAPPING}")
 
 #force command line options to be stored in cache
 set(USE_FSAL_VFS ${USE_FSAL_VFS}
@@ -835,6 +839,11 @@ set(_USE_9P ${_USE_9P}
 set(_USE_9P_RDMA ${_USE_9P_RDMA}
   CACHE BOOL
    "enable 9P_RDMA support"
+   FORCE)
+
+set(_VID_MAPPING ${_VID_MAPPING}
+  CACHE BOOL
+   "enable virtual UID/GID mapping"
    FORCE)
 
 # Now create a useable config.h

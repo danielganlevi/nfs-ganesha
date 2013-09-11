@@ -611,6 +611,37 @@ typedef struct nfs_ip_name_param {
 /** @} */
 
 /**
+ * @defgroup config_vid_map Structure and defaults for Vid_Mapping
+ *
+ * @{
+ */
+
+#ifdef _VID_MAPPING
+
+/**
+ * @brief Block label for virtual ID mapping
+ */
+#define CONF_LABEL_VID_MAPPING "VID_Mapping"
+
+/**
+ * @brief Default value for vidmap_param.expiration_time
+ */
+#define VID_MAP_EXPIRATION 36000
+
+typedef struct vidmap_param {
+	/** Expiration time for virtual ID mappings.  Defaults to
+	    VID_MAP_EXPIRATION, and settable with Expiration_Time. */
+	uint32_t expiration_time;
+	/** Script that maps virtual IDs.  Defaults to NULL,
+	    settable with Script. */
+	char map_script[MAXPATHLEN];
+} vidmap_parameter_t;
+
+#endif /* _VID_MAPPING */
+
+/** @} */
+
+/**
  * @brief Client ID hash parameters
  */
 
@@ -643,6 +674,9 @@ typedef struct nfs_param {
 	/** kerberos configuration.  Settable in the NFS_KRB5 stanza. */
 	nfs_krb5_parameter_t krb5_param;
 #endif				/* _HAVE_GSSAPI */
+#ifdef _VID_MAPPING
+	vidmap_parameter_t vidmap_param;
+#endif
 	/** Client ID cache parameters  */
 	nfs_client_id_parameter_t client_id_param;
 	/** State ID cache parameters  */

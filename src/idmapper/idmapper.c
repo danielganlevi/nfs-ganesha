@@ -45,6 +45,7 @@
 #include <grp.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <ctype.h>
 #ifdef USE_NFSIDMAP
 #include <nfsidmap.h>
 #endif				/* USE_NFSIDMAP */
@@ -95,6 +96,15 @@ bool idmapper_init(void)
 	return true;
 }
 
+#ifdef _VID_MAPPING
+bool vidmap_init(vidmap_parameter_t param)
+{
+	vidmap_cache_init();
+
+	return true;
+}                               /* vidmap_init */
+#endif
+
 /**
  * @brief Encode a UID or GID as a string
  *
@@ -111,6 +121,19 @@ static bool xdr_encode_nfs4_princ(XDR *xdrs, uint32_t id, bool group)
 	const struct gsh_buffdesc *found;
 	uint32_t not_a_size_t;
 	bool success = false;
+
+#ifdef _VID_MAPPING
+	if (group) {
+		if (!vgid2gid(&id, &id)) {
+			LogWarn(COMPONENT_IDMAPPER, "xdr_encode_nfs4_princ: Failed to map GID %"PRIu32, id);
+		}
+	}
+	else {
+		if (!vuid2uid(&id, &id)) {
+			LogWarn(COMPONENT_IDMAPPER, "xdr_encode_nfs4_princ: Failed to map UID %"PRIu32, id);
+		}
+	}
+#endif
 
 	pthread_rwlock_rdlock(group ? &idmapper_group_lock :
 			      &idmapper_user_lock);
@@ -717,6 +740,289 @@ bool principal2uid(char *principal, uid_t *uid, gid_t *gid)
 	return false;
 #endif
 }
+#endif
+
+#ifdef _VID_MAPPING
+bool query_vid(uint32_t * pid, uint32_t * pid_result, char * type, char * type_result)
+{
+	char command[2 * MAXPATHLEN];
+	FILE *command_stream = NULL;
+	char buffer[1024];
+	size_t type_result_len;
+	char *cur_pos;
+	char *end_pos;
+	bool_t result_read = FALSE;
+	uint32_t id_result;
+
+	if (nfs_param.vidmap_param.map_script[0] == '\0')
+	{
+		*pid_result = *pid;
+		return 1;
+	}
+
+	snprintf(command, 2 * MAXPATHLEN, "%s %s %u",
+		 nfs_param.vidmap_param.map_script, type, *pid);
+
+	LogFullDebug(COMPONENT_IDMAPPER, "query_vid: About to run command %s", command);
+
+	if ((command_stream = popen(command, "r")) == NULL) {
+		LogCrit(COMPONENT_IDMAPPER, "query_vid: Failed to run command %s", command);
+		return false;
+	}
+
+	type_result_len = strlen(type_result);
+
+	/* Search for a line of the form [V]UID: <number> */
+	while(fgets(buffer, sizeof(buffer), command_stream) != NULL) {
+		LogFullDebug(COMPONENT_IDMAPPER, "query_vid: Parsing line \"%s\"", buffer);
+
+		if (strncmp(buffer, type_result, type_result_len) != 0) {
+			LogFullDebug(COMPONENT_IDMAPPER, "query_vid: Line does not start with %s", type_result);
+			continue;
+		}
+
+		cur_pos = buffer + type_result_len;
+
+		while (isspace(*cur_pos)) {
+			++cur_pos;
+		}
+
+		if (*cur_pos != ':') {
+			LogFullDebug(COMPONENT_IDMAPPER, "query_vid: No \':\' after type");
+			continue;
+		}
+
+		++cur_pos;
+
+		while (isspace(*cur_pos)) {
+			++cur_pos;
+		}
+
+		if (*cur_pos == '\0') {
+			LogFullDebug(COMPONENT_IDMAPPER, "query_vid: No number after \':\'");
+			continue;
+		}
+
+		id_result = strtoul(cur_pos, &end_pos, 10);
+
+		if (cur_pos == end_pos) {
+			LogFullDebug(COMPONENT_IDMAPPER, "query_vid: No number was read");
+			continue;
+		}
+		else {
+			LogFullDebug(COMPONENT_IDMAPPER, "query_vid: Read number %"PRIu32, id_result);
+		}
+
+		cur_pos = end_pos;
+
+		while (isspace(*cur_pos)) {
+			++cur_pos;
+		}
+
+		if (*cur_pos != '\0') {
+			LogFullDebug(COMPONENT_IDMAPPER, "query_vid: Extra characters \'%s\' after number", cur_pos);
+			continue;
+		}
+
+		result_read = TRUE;
+		break;
+	}
+
+	pclose(command_stream);
+
+	if (!result_read) {
+		return false;
+	}
+
+	*pid_result = id_result;
+
+	return true;
+}
+
+/**
+ * @brief Convert UID to a virtual UID
+ *
+ * @param[in] puid The ID
+ * @param[out] pvuid The virtual UID
+ *
+ * @return true if successful, false otherwise
+ */
+bool uid2vuid(uid_t *puid, uid_t *pvuid)
+{
+	bool success = false;
+	uid_t vuid;
+
+	pthread_rwlock_rdlock(&vidmap_user_lock);
+
+	success = vidmap_lookup_by_uid(*puid, pvuid);
+
+	pthread_rwlock_unlock(&vidmap_user_lock);
+
+	if (likely(success)) {
+		return true;
+	}
+
+	if (!query_vid(puid, &vuid, "XIDTOID UID", "UID")) {
+		LogWarn(COMPONENT_IDMAPPER,
+			"uid2vuid: Query for UID %u failed",
+			*puid);
+		return false;
+	}
+	else {
+		pthread_rwlock_wrlock(&vidmap_user_lock);
+
+		vidmap_add_user(*puid,vuid);
+
+		pthread_rwlock_unlock(&vidmap_user_lock);
+
+		*pvuid = vuid;
+	}
+
+	LogFullDebug(COMPONENT_IDMAPPER,
+		     "uid2vuid: Mapped UID %u to VUID %u",
+		     *puid, *pvuid);
+
+	return true;
+}
+
+/**
+ * @brief Convert a virtual UID to UID
+ *
+ * @param[out] pvuid The virtual UID
+ * @param[in] puid The ID
+ *
+ * @return true if successful, false otherwise
+ */
+bool vuid2uid( uid_t *pvuid, uid_t *puid)
+{
+	bool success = false;
+	uid_t uid;
+
+	pthread_rwlock_rdlock(&vidmap_user_lock);
+
+	success = vidmap_lookup_by_vuid(*pvuid, puid);
+
+	pthread_rwlock_unlock(&vidmap_user_lock);
+
+	if (likely(success)) {
+		return true;
+	}
+
+	if (!query_vid(pvuid, &uid, "IDTOXID UID", "UID")) {
+		LogWarn(COMPONENT_IDMAPPER,
+			"vuid2uid: Query for VUID %u failed",
+			*pvuid);
+		return false;
+	}
+	else {
+		pthread_rwlock_wrlock(&vidmap_user_lock);
+
+		vidmap_add_user(uid,*pvuid);
+
+		pthread_rwlock_unlock(&vidmap_user_lock);
+
+		*puid = uid;
+	}
+
+	LogFullDebug(COMPONENT_IDMAPPER,
+		     "vuid2uid: Mapped VUID %u to UID %u",
+		     *pvuid, *puid);
+
+	return true;
+}
+
+/**
+ * @brief Convert GID to a virtual GID
+ *
+ * @param[in] pgid The ID
+ * @param[out] pvgid The virtual GID
+ *
+ * @return true if successful, false otherwise
+ */
+bool gid2vgid(gid_t *pgid, gid_t *pvgid)
+{
+	bool success = false;
+	gid_t vgid;
+
+	pthread_rwlock_rdlock(&vidmap_group_lock);
+
+	success = vidmap_lookup_by_gid(*pgid, pvgid);
+
+	pthread_rwlock_unlock(&vidmap_group_lock);
+
+	if (likely(success)) {
+		return true;
+	}
+
+	if (!query_vid(pgid, &vgid, "XIDTOID GID", "GID")) {
+		LogWarn(COMPONENT_IDMAPPER,
+			"gid2vgid: Query for GID %u failed",
+			*pgid);
+		return false;
+	}
+	else {
+		pthread_rwlock_wrlock(&vidmap_group_lock);
+
+		vidmap_add_group(*pgid,vgid);
+
+		pthread_rwlock_unlock(&vidmap_group_lock);
+
+		*pvgid = vgid;
+	}
+
+	LogFullDebug(COMPONENT_IDMAPPER,
+		     "gid2vgid: Mapped GID %u to VGID %u",
+		     *pgid, *pvgid);
+
+	return true;
+}
+
+/**
+ * @brief Convert a virtual GID to GID
+ *
+ * @param[out] pvgid The virtual GID
+ * @param[in] pgid The ID
+ *
+ * @return true if successful, false otherwise
+ */
+bool vgid2gid( gid_t *pvgid, gid_t *pgid)
+{
+	bool success = false;
+	gid_t gid;
+
+	pthread_rwlock_rdlock(&vidmap_group_lock);
+
+	success = vidmap_lookup_by_vgid(*pvgid, pgid);
+
+	pthread_rwlock_unlock(&vidmap_group_lock);
+
+	if (likely(success)) {
+		return true;
+	}
+
+	if (!query_vid(pvgid, &gid, "IDTOXID GID", "GID")) {
+		LogWarn(COMPONENT_IDMAPPER,
+			"vgid2gid: Query for VGID %u failed",
+			*pvgid);
+		return false;
+	}
+	else {
+		pthread_rwlock_wrlock(&vidmap_group_lock);
+
+		vidmap_add_group(gid,*pvgid);
+
+		pthread_rwlock_unlock(&vidmap_group_lock);
+
+		*pgid = gid;
+	}
+
+	LogFullDebug(COMPONENT_IDMAPPER,
+		     "vgid2gid: Mapped VGID %u to GID %u",
+		     *pvgid, *pgid);
+
+	return true;
+}
+
 #endif
 
 /** @} */

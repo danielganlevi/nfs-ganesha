@@ -104,6 +104,9 @@ typedef struct fsal_init_info__ {
 #define USER_CRED_ANONYMOUS     0x0001
 #define USER_CRED_GSS_PROCESSED 0x0002
 #define USER_CRED_SAVED         0x0004
+#ifdef _VID_MAPPING
+#define USER_CRED_VID_MAPPED    0x0008
+#endif
 
 /* Used to record the uid and gid of the client that made a request. */
 struct user_cred {

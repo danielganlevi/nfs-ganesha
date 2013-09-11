@@ -148,6 +148,12 @@ nfs_parameter_t nfs_param = {
 	.nfsv4_param.use_getpwnam = true,
 #endif
 
+#ifdef _VID_MAPPING
+	/*  Worker parameters : virtual ID mapping */
+	.vidmap_param.map_script[0] = '\0',
+	.vidmap_param.expiration_time = VID_MAP_EXPIRATION,
+#endif
+
 	/*  Worker parameters : IP/name hash table */
 	.ip_name_param.hash_param.index_size = PRIME_IP_NAME,
 	.ip_name_param.hash_param.hash_func_key = ip_name_value_hash_func,
@@ -521,6 +527,24 @@ int nfs_set_param_from_conf(config_file_t config_struct,
 			LogDebug(COMPONENT_INIT,
 				 "IP/name configuration read from config file");
 	}
+
+#ifdef _VID_MAPPING
+	/* Worker parameters: virtual ID mapping */
+	if((rc = nfs_read_vidmap_conf(config_struct, &nfs_param.vidmap_param)) < 0) {
+		LogCrit(COMPONENT_INIT,
+			"Error while parsing VID mapping configuration");
+		return -1;
+	}
+	else {
+		/* No such stanza in configuration file */
+		if(rc == 1)
+			LogDebug(COMPONENT_INIT,
+				 "No VID mapping configuration found in config file, using default");
+		else
+			LogDebug(COMPONENT_INIT,
+				 "VID mapping configuration read from config file");
+	}
+#endif
 
 #ifdef _HAVE_GSSAPI
 	/* NFS kerberos5 configuration */
@@ -941,6 +965,15 @@ static void nfs_Init(const nfs_start_info_t *p_start_info)
 		LogFatal(COMPONENT_INIT, "Failed initializing ID Mapper.");
 	else
 		LogEvent(COMPONENT_INIT, "ID Mapper successfully initialized.");
+
+#ifdef _VID_MAPPING
+	/* Init the virtual ID mapping */
+	LogDebug(COMPONENT_INIT, "Initializing VID mapping");
+	if(!vidmap_init(nfs_param.vidmap_param)) {
+		LogFatal(COMPONENT_INIT, "Error while initializing VID mapping");
+	}
+	LogInfo(COMPONENT_INIT, "VID mapping successfully initialized");
+#endif
 
 	/* Init the NFSv4 Clientid cache */
 	LogDebug(COMPONENT_INIT, "Now building NFSv4 clientid cache");
