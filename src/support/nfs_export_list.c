@@ -229,46 +229,48 @@ bool get_req_uid_gid(struct svc_req *req, struct user_cred *user_credentials)
 		break;
 	}
 #ifdef _VID_MAPPING
-	if (!uid2vuid(&user_credentials->caller_uid, &user_credentials->caller_uid)) {
-		LogCrit(COMPONENT_IDMAPPER,
-			"get_req_uid_gid: Failed to map virtual ID for UID %d",
-			user_credentials->caller_uid);
-		return FALSE;
-	}
-
-	if (!gid2vgid(&user_credentials->caller_gid, &user_credentials->caller_gid)) {
-		LogCrit(COMPONENT_IDMAPPER,
-			"get_req_uid_gid: Failed to map virtual ID for GID %d",
-			user_credentials->caller_gid);
-		return FALSE;
-	}
-
-	if (user_credentials->caller_glen > 0) {
-		tmp_caller_garray = gsh_malloc(user_credentials->caller_glen * sizeof(gid_t));
-		if(tmp_caller_garray == NULL) {
-			LogCrit(COMPONENT_DISPATCH, "Failure to allocate memory for VID group list");
+	if ((user_credentials->caller_flags & USER_CRED_ANONYMOUS) != 0) {
+		if (!uid2vuid(&user_credentials->caller_uid, &user_credentials->caller_uid)) {
+			LogCrit(COMPONENT_IDMAPPER,
+				"get_req_uid_gid: Failed to map virtual ID for UID %d",
+				user_credentials->caller_uid);
 			return FALSE;
 		}
 
-		for (i = 0; i < user_credentials->caller_glen; ++i) {
-			if (!gid2vgid(&user_credentials->caller_garray[i], &tmp_caller_garray[i])) {
-				LogCrit(COMPONENT_IDMAPPER,
-					"get_req_uid_gid: Failed to map virtual ID for GID %d",
-					user_credentials->caller_garray[i]);
-				gsh_free(tmp_caller_garray);
+		if (!gid2vgid(&user_credentials->caller_gid, &user_credentials->caller_gid)) {
+			LogCrit(COMPONENT_IDMAPPER,
+				"get_req_uid_gid: Failed to map virtual ID for GID %d",
+				user_credentials->caller_gid);
+			return FALSE;
+		}
+
+		if (user_credentials->caller_glen > 0) {
+			tmp_caller_garray = gsh_malloc(user_credentials->caller_glen * sizeof(gid_t));
+			if(tmp_caller_garray == NULL) {
+				LogCrit(COMPONENT_DISPATCH, "Failure to allocate memory for VID group list");
 				return FALSE;
 			}
-		}
+
+			for (i = 0; i < user_credentials->caller_glen; ++i) {
+				if (!gid2vgid(&user_credentials->caller_garray[i], &tmp_caller_garray[i])) {
+					LogCrit(COMPONENT_IDMAPPER,
+						"get_req_uid_gid: Failed to map virtual ID for GID %d",
+						user_credentials->caller_garray[i]);
+					gsh_free(tmp_caller_garray);
+					return FALSE;
+				}
+			}
 
 #ifdef _HAVE_GSSAPI
-		if((user_credentials->caller_flags & USER_CRED_GSS_PROCESSED) != 0) {
-			gsh_free(user_credentials->caller_garray);
-		}
+			if((user_credentials->caller_flags & USER_CRED_GSS_PROCESSED) != 0) {
+				gsh_free(user_credentials->caller_garray);
+			}
 #endif
-		user_credentials->caller_garray = tmp_caller_garray;
+			user_credentials->caller_garray = tmp_caller_garray;
 
+		}
+		user_credentials->caller_flags |= USER_CRED_VID_MAPPED;
 	}
-	user_credentials->caller_flags |= USER_CRED_VID_MAPPED;
 #endif
 
 	return true;
@@ -319,6 +321,20 @@ void nfs_check_anon(export_perms_t *export_perms, exportlist_t *export,
 		user_credentials->caller_uid = export_perms->anonymous_uid;
 		user_credentials->caller_gid = export_perms->anonymous_gid;
 
+#ifdef _VID_MAPPING
+		if (!uid2vuid(&user_credentials->caller_uid, &user_credentials->caller_uid)) {
+			LogCrit(COMPONENT_IDMAPPER,
+				"nfs_check_anon: Failed to map virtual ID for anonymous UID %d",
+				user_credentials->caller_uid);
+		}
+
+		if (!gid2vgid(&user_credentials->caller_gid, &user_credentials->caller_gid)) {
+			LogCrit(COMPONENT_IDMAPPER,
+				"nfs_check_anon: Failed to map virtual ID for anonymous GID %d",
+				user_credentials->caller_gid);
+		}
+#endif
+
 		/* No alternate groups for "nobody" */
 		user_credentials->caller_glen = 0;
 		user_credentials->caller_garray = NULL;
@@ -344,6 +360,13 @@ void nfs_check_anon(export_perms_t *export_perms, exportlist_t *export,
 
 		/* Map gid to "nobody" */
 		user_credentials->caller_gid = export_perms->anonymous_gid;
+#ifdef _VID_MAPPING
+		if (!gid2vgid(&user_credentials->caller_gid, &user_credentials->caller_gid)) {
+			LogCrit(COMPONENT_IDMAPPER,
+				"nfs_check_anon: Failed to map virtual ID for anonymous GID %d",
+				user_credentials->caller_gid);
+		}
+#endif
 
 		/* Keep alternate groups, we may squash them below */
 	} else {
@@ -385,6 +408,13 @@ void nfs_check_anon(export_perms_t *export_perms, exportlist_t *export,
 					user_credentials->caller_gpos_root = i;
 				user_credentials->caller_garray[i] =
 				    export_perms->anonymous_gid;
+#ifdef _VID_MAPPING
+				if (!gid2vgid(&user_credentials->caller_garray[i], &user_credentials->caller_garray[i])) {
+					LogCrit(COMPONENT_IDMAPPER,
+						"nfs_check_anon: Failed to map virtual ID for anonymous GID %d",
+						user_credentials->caller_garray[i]);
+				}
+#endif
 			}
 		}
 	}
