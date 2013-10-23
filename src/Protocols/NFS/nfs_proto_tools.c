@@ -1983,7 +1983,7 @@ int nfs4_FhandleToExId(nfs_fh4 * fh4p, unsigned short *ExIdp)
   pfhandle4 = (file_handle_v4_t *) (fh4p->nfs_fh4_val);
 
   /* The function should not be used on a pseudo fhandle */
-  if(pfhandle4->pseudofs_flag == TRUE)
+  if(pfhandle4->exportid == 0)
     return FALSE;
 
   *ExIdp = pfhandle4->exportid;
@@ -4260,10 +4260,11 @@ int nfs4_MakeCred(compound_data_t * data)
   /* Check protocol version */
   if((data->export_perms.options & EXPORT_OPTION_NFSV4) == 0)
     {
-      LogInfo(COMPONENT_NFS_V4,
-              "NFS4 not allowed on Export_Id %d %s for client %s",
-              data->pexport->id, data->pexport->fullpath,
-              data->pworker->hostaddr_str);
+      if (data->pexport != NULL) /* NULL if this node is pseudofs */
+        LogInfo(COMPONENT_NFS_V4,
+                "NFS4 not allowed on Export_Id %d %s for client %s",
+                data->pexport->id, data->pexport->fullpath,
+                data->pworker->hostaddr_str);
 
       return NFS4ERR_ACCESS;
     }
